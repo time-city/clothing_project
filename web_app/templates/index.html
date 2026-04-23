@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phân loại Quần Áo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>👗 Phân Loại Quần Áo</h1>
+            <p class="subtitle">Tải ảnh quần áo để AI phân loại loại quần áo của bạn</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Upload Section -->
+            <section class="upload-section">
+                <div class="upload-box">
+                    <div class="upload-area" id="uploadArea">
+                        <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                        <div class="upload-icon">📸</div>
+                        <p class="upload-text">Kéo ảnh vào đây hoặc <button type="button" class="link-btn" id="uploadBtn">chọn ảnh</button></p>
+                        <small>JPG, PNG, BMP (tối đa 16MB)</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Preview Section -->
+            <section class="preview-section" id="previewSection" style="display: none;">
+                <div class="preview-container">
+                    <img id="previewImage" src="" alt="Preview" class="preview-image">
+                    <div class="preview-info">
+                        <p id="fileName"></p>
+                        <p id="fileSize"></p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Predict Button -->
+            <div class="button-group" id="buttonGroup" style="display: none;">
+                <button id="predictBtn" class="btn btn-primary">🔍 Dự Đoán</button>
+                <button id="resetBtn" class="btn btn-secondary">🔄 Chọn Ảnh Khác</button>
+            </div>
+
+            <!-- Loading Spinner -->
+            <div class="spinner" id="spinner" style="display: none;"></div>
+
+            <!-- Result Section -->
+            <section class="result-section" id="resultSection" style="display: none;">
+                <div class="result-container">
+                    <div class="prediction-result">
+                        <h2>Kết Quả Dự Đoán</h2>
+                        <div class="main-prediction">
+                            <p class="prediction-label">Loại Quần Áo:</p>
+                            <p class="prediction-class" id="predictionClass"></p>
+                            <p class="prediction-confidence" id="predictionConfidence"></p>
+                        </div>
+                    </div>
+
+                    <!-- All Probabilities -->
+                    <div class="probabilities-result">
+                        <h3>Xác Suất Theo Loại</h3>
+                        <div class="probability-list" id="probabilityList"></div>
+                    </div>
+
+                    <!-- Chart -->
+                    <div class="chart-container">
+                        <canvas id="probabilityChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Error Message -->
+            <div class="error-message" id="errorMessage" style="display: none;"></div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Xây dựng bằng Flask + PyTorch ResNet50</p>
+            <p id="deviceInfo"></p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
