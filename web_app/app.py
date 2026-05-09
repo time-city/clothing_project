@@ -1,14 +1,13 @@
 """
-app.py - Flask Web App cho phân loại quần áo
+app.py - Flask Web App cho phân loại quần áo (Multi-Model Support)
 
-Đơn giản, dễ dùng, tích hợp Cloudinary.
-Chạy: python app.py hoặc gunicorn -w 2 -b 0.0.0.0:5000 app:app
+Hoàn toàn tự động - chỉ cần train xong model, copy vào ai_model/ hoặc mobilenet_model/ và chạy!
+Chạy: python app.py hoặc MODEL_TYPE=mobilenet python app.py
 """
 
 from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
 import torch
-from torchvision import transforms
 from PIL import Image
 import json
 from pathlib import Path
@@ -20,21 +19,48 @@ from dotenv import load_dotenv
 # Load environment variables từ .env file
 load_dotenv()
 
-# Import model từ ai_model folder
+# Import models
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / 'ai_model'))
-try:
-    from train import ClothingClassifier
-except ImportError:
-    print("WARNING: Could not import ClothingClassifier from train.py")
-    ClothingClassifier = None
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Model type (default: resnet, options: resnet, mobilenet)
+MODEL_TYPE = os.getenv('MODEL_TYPE', 'resnet').lower()
+print(f"🎽 Selected model type: {MODEL_TYPE}")
+
+# Import appropriate model
+if MODEL_TYPE == 'mobilenet':
+    try:
+        from mobilenet_model.model import MobileNetClassifier as Classifier
+        from mobilenet_model.model import load_model, predict, CLASS_NAMES, prepare_image_for_inference
+        MODEL_PATH = Path(__file__).parent.parent / 'mobilenet_model' / 'clothing_model.pth'
+        MODEL_VARIANT = 'MobileNet'
+    except ImportError as e:
+        print(f"ERROR: Could not import MobileNet model: {e}")
+        MODEL_TYPE = 'resnet'
+        from ai_model.model import ClothingClassifier as Classifier
+        from ai_model.model import load_model, predict, CLASS_NAMES, prepare_image_for_inference
+        MODEL_PATH = Path(__file__).parent.parent / 'ai_model' / 'best_model.pth'
+        MODEL_VARIANT = 'ResNet50'
+else:
+    try:
+        from ai_model.model import ClothingClassifier as Classifier
+        from ai_model.model import load_model, predict, CLASS_NAMES, prepare_image_for_inference
+        MODEL_PATH = Path(__file__).parent.parent / 'ai_model' / 'best_model.pth'
+        MODEL_VARIANT = 'ResNet50'
+    except ImportError as e:
+        print(f"ERROR: Could not import ResNet model: {e}")
+        print("Make sure ai_model/model.py exists!")
+        Classifier = None
+        CLASS_NAMES = []
+        MODEL_PATH = None
+        MODEL_VARIANT = 'Unknown'
 
 # Import Cloudinary helper
 try:
-    from cloudinary_helper import create_cloudinary_helper
+    from web_app.cloudinary_helper import create_cloudinary_helper
     CLOUDINARY_AVAILABLE = True
 except ImportError:
-    print("WARNING: Cloudinary not available")
+    print("⚠️  Cloudinary not installed or helper not found")
     CLOUDINARY_AVAILABLE = False
 
 # ==================== Initialize Flask ====================
@@ -43,64 +69,52 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 
 # Device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device: {device}")
-
-# Class names
-CLASS_NAMES = [
-    "Áo khoác",     # 0
-    "Áo sơ mi",     # 1
-    "Áo thun",      # 2
-    "Quần Jean",    # 3
-    "Quần short",   # 4
-    "Quần tây",     # 5
-    "Váy",          # 6
-    "Váy dài"       # 7
-]
-
-# Model paths
-MODEL_PATH = Path(__file__).parent.parent / 'ai_model' / 'best_model.pth'
+print(f"🖥️  Using device: {device}")
+print(f"📊 Model path: {MODEL_PATH}")
 
 # Global model
 classifier = None
-image_transform = None
 cloudinary_helper = None
 
+CLASS_DISPLAY_NAMES = {
+    'ao_khoac': 'Áo khoác',
+    'ao_so_mi': 'Áo sơ mi',
+    'ao_thun': 'Áo thun',
+    'quan_jean': 'Quần jean',
+    'quan_short': 'Quần short',
+    'quan_tay': 'Quần tây',
+    'sweater_hoodie': ' Hoodie',
+    'vay': 'Váy',
+}
 
-def load_model():
-    """Load model từ checkpoint"""
-    global classifier, image_transform
+
+def display_class_name(class_name: str) -> str:
+    return CLASS_DISPLAY_NAMES.get(class_name, class_name)
+
+
+def display_class_names(class_names: list[str]) -> list[str]:
+    return [display_class_name(name) for name in class_names]
+
+
+def load_trained_model():
+    """Load trained model từ saved weights"""
+    global classifier
     
     try:
-        if not MODEL_PATH.exists():
-            print(f"Model not found at {MODEL_PATH}")
+        if MODEL_PATH is None or not MODEL_PATH.exists():
+            print(f"❌ Model not found at {MODEL_PATH}")
+            print(f"   Please download trained model from Colab & place it at {MODEL_PATH}")
             return False
         
-        print(f"Loading model from {MODEL_PATH}...")
-        classifier = ClothingClassifier(num_classes=8)
+        print(f"📥 Loading {MODEL_VARIANT} model from {MODEL_PATH}...")
+        classifier = load_model(str(MODEL_PATH), device=device)
         
-        checkpoint = torch.load(MODEL_PATH, map_location=device)
-        if 'model_state_dict' in checkpoint:
-            classifier.model.load_state_dict(checkpoint['model_state_dict'])
-        else:
-            classifier.model.load_state_dict(checkpoint)
-        
-        classifier.model.to(device)
-        classifier.model.eval()
-        
-        # Image transforms
-        image_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            )
-        ])
-        
-        print("Model loaded successfully!")
+        print("✅ Model loaded successfully!")
         return True
     except Exception as e:
-        print(f"Error loading model: {str(e)}")
+        print(f"❌ Error loading model: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -139,7 +153,9 @@ def index():
     model_loaded = classifier is not None
     return render_template('index.html', 
                          model_loaded=model_loaded,
-                         class_names=CLASS_NAMES)
+                         class_names=display_class_names(CLASS_NAMES),
+                         model_type=MODEL_TYPE,
+                         model_variant=MODEL_VARIANT)
 
 
 @app.route('/api/status', methods=['GET'])
@@ -148,9 +164,32 @@ def api_status():
     return jsonify({
         'status': 'ok',
         'model_loaded': classifier is not None,
+        'model_type': MODEL_TYPE,
+        'model_variant': MODEL_VARIANT,
         'device': str(device),
         'num_classes': len(CLASS_NAMES),
-        'classes': CLASS_NAMES
+        'classes': display_class_names(CLASS_NAMES),
+        'available_models': ['resnet', 'mobilenet']
+    })
+
+
+@app.route('/api/models', methods=['GET'])
+def api_models():
+    """Get available models and their status"""
+    resnet_exists = (Path(__file__).parent.parent / 'ai_model' / 'best_model.pth').exists()
+    mobilenet_exists = (Path(__file__).parent.parent / 'mobilenet_model' / 'clothing_model.pth').exists()
+    
+    return jsonify({
+        'available': {
+            'resnet': resnet_exists,
+            'mobilenet': mobilenet_exists
+        },
+        'current': {
+            'type': MODEL_TYPE,
+            'variant': MODEL_VARIANT,
+            'loaded': classifier is not None,
+            'classes': display_class_names(CLASS_NAMES),
+        }
     })
 
 
@@ -162,7 +201,7 @@ def api_predict():
         if classifier is None:
             return jsonify({
                 'success': False,
-                'error': 'Model not loaded. Ensure best_model.pth exists in ai_model folder.'
+                'error': f'Model not loaded. Ensure the selected checkpoint exists in the {MODEL_VARIANT.lower()} folder.'
             }), 400
         
         # Get image
@@ -181,7 +220,7 @@ def api_predict():
         
         # Load image
         try:
-            image = Image.open(BytesIO(file.read())).convert('RGB')
+            image = Image.open(BytesIO(file.read()))
         except Exception as e:
             return jsonify({
                 'success': False,
@@ -194,7 +233,7 @@ def api_predict():
             try:
                 # Save to temp file
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                    image.save(tmp.name)
+                    prepare_image_for_inference(image).save(tmp.name)
                     
                     # Upload to Cloudinary
                     result = cloudinary_helper.upload_image(tmp.name)
@@ -206,28 +245,19 @@ def api_predict():
             except Exception as e:
                 print(f"Cloudinary upload error: {str(e)}")
         
-        # Predict
-        with torch.no_grad():
-            image_tensor = image_transform(image).unsqueeze(0).to(device)
-            output = classifier.model(image_tensor)
-            probabilities = torch.nn.functional.softmax(output, dim=1)
-            confidence, predicted = torch.max(probabilities, 1)
+        # Predict using model
+        top_classes, top_scores, top_indices = predict(classifier, image, device=device, return_top_k=1)
+        top_classes_display = [display_class_name(name) for name in top_classes]
         
         # Format results
-        probs = probabilities[0].cpu().numpy()
-        predicted_idx = predicted.item()
-        confidence_value = float(confidence.item())
-        
         result = {
             'success': True,
+            'model_used': MODEL_VARIANT,
             'prediction': {
-                'class_index': predicted_idx,
-                'class_name': CLASS_NAMES[predicted_idx],
-                'confidence': confidence_value,
-                'confidence_percent': confidence_value * 100
-            },
-            'all_probabilities': {
-                CLASS_NAMES[i]: float(prob) for i, prob in enumerate(probs)
+                'class_index': int(top_indices[0]),
+                'class_name': top_classes_display[0],
+                'confidence': float(top_scores[0]),
+                'confidence_percent': float(top_scores[0]) * 100
             }
         }
         
@@ -276,14 +306,17 @@ def server_error(e):
 # ==================== Main ====================
 
 if __name__ == '__main__':
-    print("Starting Flask server...")
+    print("\n" + "🎽"*30)
+    print("CLOTHING CLASSIFIER - WEB APP (Multi-Model)")
+    print("🎽"*30)
     
     # Try to load model
-    model_loaded = load_model()
+    model_loaded = load_trained_model()
     if model_loaded:
-        print("✅ Model loaded successfully")
+        print(f"✅ {MODEL_VARIANT} model ready for predictions")
     else:
         print("⚠️  Model not loaded - will run in demo mode")
+        print(f"   Expected path: {MODEL_PATH}")
     
     # Try to initialize Cloudinary
     cloudinary_ok = init_cloudinary()
@@ -292,7 +325,22 @@ if __name__ == '__main__':
     else:
         print("⚠️  Cloudinary not configured - using local upload only")
     
-    # Run app (use port 8000 to avoid conflicts)
+    # Print info
+    print(f"\n🌐 Starting Flask server...")
+    print(f"   URL: http://localhost:8000")
+    print(f"   Model: {MODEL_VARIANT} ({MODEL_TYPE})")
+    print(f"   Device: {device}")
+    print(f"   Classes: {len(CLASS_NAMES)}")
+    print(f"\n📝 API Endpoints:")
+    print(f"   GET  / - Web interface")
+    print(f"   GET  /api/status - Server status & info")
+    print(f"   GET  /api/models - Available models")
+    print(f"   POST /api/predict - Get prediction")
+    print(f"\n💡 To use MobileNet instead of ResNet:")
+    print(f"   MODEL_TYPE=mobilenet python app.py")
+    print("\n" + "🎽"*30 + "\n")
+    
+    # Run app
     app.run(
         host='0.0.0.0',
         port=8000,

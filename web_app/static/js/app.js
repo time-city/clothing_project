@@ -1,7 +1,8 @@
-// app.js - Frontend logic for clothing classifier
+// app.js - Frontend logic for clothing classifier (Multi-Model)
 
 let selectedImage = null;
 let chart = null;
+let currentModel = 'resnet';
 
 // DOM Elements
 const uploadArea = document.getElementById('uploadArea');
@@ -18,11 +19,14 @@ const spinner = document.getElementById('spinner');
 const resultSection = document.getElementById('resultSection');
 const errorMessage = document.getElementById('errorMessage');
 const deviceInfo = document.getElementById('deviceInfo');
+const modelInfo = document.getElementById('modelInfo');
+const modelTypeSelect = document.getElementById('modelType');
 
 // ==================== Initialize ====================
 document.addEventListener('DOMContentLoaded', function() {
     setupEventListeners();
     checkStatus();
+    loadModelInfo();
 });
 
 function setupEventListeners() {
@@ -31,8 +35,58 @@ function setupEventListeners() {
     uploadArea.addEventListener('dragover', handleDragOver);
     uploadArea.addEventListener('dragleave', handleDragLeave);
     uploadArea.addEventListener('drop', handleDrop);
+    document.addEventListener('paste', handlePaste);
     predictBtn.addEventListener('click', predict);
     resetBtn.addEventListener('click', reset);
+    modelTypeSelect.addEventListener('change', handleModelChange);
+}
+
+function handleModelChange(event) {
+    currentModel = event.target.value;
+    localStorage.setItem('selectedModel', currentModel);
+    console.log(`Model switched to: ${currentModel}`);
+    showError(`✅ Model đã chuyển sang: ${currentModel === 'resnet' ? 'ResNet50' : 'MobileNet'}`);
+    setTimeout(() => errorMessage.style.display = 'none', 3000);
+}
+
+async function loadModelInfo() {
+    try {
+        const response = await fetch('/api/models');
+        const data = await response.json();
+        
+        const resnetAvailable = data.available.resnet;
+        const mobilenetAvailable = data.available.mobilenet;
+        
+        // Update select options
+        modelTypeSelect.options[0].disabled = !resnetAvailable;
+        modelTypeSelect.options[1].disabled = !mobilenetAvailable;
+        
+        // Restore saved model preference or use current
+        const saved = localStorage.getItem('selectedModel');
+        if (saved && document.querySelector(`option[value="${saved}"]`).disabled === false) {
+            currentModel = saved;
+            modelTypeSelect.value = currentModel;
+        } else {
+            currentModel = data.current.type;
+            modelTypeSelect.value = currentModel;
+        }
+        
+        // Update model info
+        let info = `📦 Model: ${data.current.variant}`;
+        if (resnetAvailable) info += ' ✅ ResNet50';
+        if (!resnetAvailable) info += ' ❌ ResNet50';
+        if (mobilenetAvailable) info += ' ✅ MobileNet';
+        if (!mobilenetAvailable) info += ' ❌ MobileNet';
+
+        if (Array.isArray(data.current.classes) && data.current.classes.length > 0) {
+            info += ` | Lớp: ${data.current.classes.join(', ')}`;
+        }
+        
+        modelInfo.textContent = info;
+    } catch (error) {
+        console.error('Error loading model info:', error);
+        modelInfo.textContent = '⚠️ Không thể tải thông tin model';
+    }
 }
 
 // ==================== File Handling ====================
@@ -67,6 +121,23 @@ function handleDrop(event) {
             processFile(file);
         } else {
             showError('Vui lòng chọn tệp ảnh hợp lệ!');
+        }
+    }
+}
+
+function handlePaste(event) {
+    const clipboardItems = event.clipboardData?.items;
+    if (!clipboardItems) {
+        return;
+    }
+
+    for (const item of clipboardItems) {
+        if (item.type && item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) {
+                processFile(file);
+                return;
+            }
         }
     }
 }
@@ -152,36 +223,35 @@ async function predict() {
 
 function displayResults(data) {
     const prediction = data.prediction;
-    const probs = data.all_probabilities;
     
     // Update prediction text
     document.getElementById('predictionClass').textContent = prediction.class_name;
     document.getElementById('predictionConfidence').textContent = 
-        `Độ tin cậy: ${prediction.confidence_percent.toFixed(2)}%`;
+        `Độ tin cậy: ${prediction.confidence_percent.toFixed(2)}% (${data.model_used})`;
     
-    // Create probability list
+    // Show only the top prediction as a single item
     const probList = document.getElementById('probabilityList');
     probList.innerHTML = '';
+    probList.appendChild(createProbabilityItem(prediction.class_name, prediction.confidence, 1));
     
-    Object.entries(probs).forEach(([className, prob]) => {
-        const item = createProbabilityItem(className, prob);
-        probList.appendChild(item);
-    });
-    
-    // Draw chart
-    drawChart(probs);
+    // Hide chart-related content when only one prediction is shown
+    const chartContainer = document.querySelector('.chart-container');
+    if (chartContainer) {
+        chartContainer.style.display = 'none';
+    }
     
     // Show result section
     resultSection.style.display = 'block';
 }
 
-function createProbabilityItem(className, probability) {
+function createProbabilityItem(className, probability, rank) {
     const item = document.createElement('div');
     item.className = 'probability-item';
     
     const percent = (probability * 100).toFixed(1);
     
     item.innerHTML = `
+        <span class="probability-rank">#${rank}</span>
         <span class="probability-label">${className}</span>
         <div class="probability-bar">
             <div class="probability-fill" style="width: ${percent}%">
@@ -194,58 +264,16 @@ function createProbabilityItem(className, probability) {
     return item;
 }
 
-function drawChart(probabilities) {
-    const ctx = document.getElementById('probabilityChart').getContext('2d');
-    
-    // Destroy existing chart
+function drawChart(data) {
+    const chartContainer = document.querySelector('.chart-container');
+    if (chartContainer) {
+        chartContainer.style.display = 'none';
+    }
+
     if (chart) {
         chart.destroy();
+        chart = null;
     }
-    
-    const labels = Object.keys(probabilities);
-    const values = Object.values(probabilities).map(p => (p * 100).toFixed(2));
-    
-    chart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Xác suất (%)',
-                data: values,
-                backgroundColor: '#3498db',
-                borderColor: '#2980b9',
-                borderWidth: 1,
-                borderRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 100,
-                    title: {
-                        display: true,
-                        text: 'Xác suất (%)'
-                    }
-                }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                },
-                title: {
-                    display: true,
-                    text: 'Xác suất phân loại theo từng loại',
-                    font: {
-                        size: 14,
-                        weight: 'bold'
-                    }
-                }
-            }
-        }
-    });
 }
 
 // ==================== Reset ====================
@@ -256,6 +284,10 @@ function reset() {
     buttonGroup.style.display = 'none';
     resultSection.style.display = 'none';
     errorMessage.style.display = 'none';
+    const chartContainer = document.querySelector('.chart-container');
+    if (chartContainer) {
+        chartContainer.style.display = 'none';
+    }
     if (chart) {
         chart.destroy();
         chart = null;
@@ -274,7 +306,7 @@ async function checkStatus() {
         const data = await response.json();
         
         if (!data.model_loaded) {
-            showError('⚠️ Mô hình chưa được tải. Vui lòng chạy training.py trong ai_model folder trước!');
+            showError('⚠️ Mô hình chưa được tải. Vui lòng chạy training trên Colab và download model!');
             predictBtn.disabled = true;
         }
         

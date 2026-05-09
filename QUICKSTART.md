@@ -61,20 +61,17 @@ EOF
 ### 5️⃣ Chạy Web App
 
 ```bash
-# Cài thư viện
-pip install -r requirements_web.txt
+# Chạy từ thư mục gốc của project
+bash run.sh
 
-# Chạy app
-streamlit run app.py
-
-# 🌐 Truy cập: http://localhost:8501
+# 🌐 Truy cập: http://localhost:8000
 ```
 
 ## ✅ Kiểm Tra Lại
 
 Nếu thành công:
-- ✅ Terminal hiển thị: "You can now view your Streamlit app..."
-- ✅ Browser tự động mở tại http://localhost:8501
+- ✅ Terminal hiển thị: "Starting Flask server..."
+- ✅ Browser mở tại http://localhost:8000
 - ✅ Giao diện hiển thị title "👗 Clothing Classification Dashboard"
 
 ## 🆘 Gặp Vấn Đề?
@@ -84,7 +81,7 @@ Nếu thành công:
 | **Cài đặt thư viện lâu** | Dùng `pip cache purge && pip install -r requirements.txt` |
 | **GPU không nhận diện** | Chạy `python -c "import torch; print(torch.cuda.is_available())"` |
 | **Cloudinary error** | Kiểm tra credentials, đảm bảo copy đúng vào secrets.toml |
-| **Port 8501 đã dùng** | Chạy `streamlit run app.py --server.port 8502` |
+| **Port 8000 đã dùng** | Dừng tiến trình đang chiếm port hoặc sửa `app.py`/`run.sh` để dùng port khác |
 
 ## 📖 Xem Thêm
 
