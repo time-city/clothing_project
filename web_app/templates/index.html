@@ -11,7 +11,16 @@
         <!-- Header -->
         <header class="header">
             <h1>👗 Phân Loại Quần Áo</h1>
-            <p class="subtitle">Tải ảnh quần áo để AI phân loại loại quần áo của bạn</p>
+            <p class="subtitle">Tải ảnh quần áo, kéo thả hoặc dán trực tiếp từ clipboard để AI phân loại cho bạn</p>
+            
+            <!-- Model Selector -->
+            <div class="model-selector">
+                <label for="modelType">🤖 Model:</label>
+                <select id="modelType">
+                    <option value="resnet">ResNet50 (Chính xác cao)</option>
+                    <option value="mobilenet">MobileNet (Nhanh nhạp)</option>
+                </select>
+            </div>
         </header>
 
         <!-- Main Content -->
@@ -22,8 +31,8 @@
                     <div class="upload-area" id="uploadArea">
                         <input type="file" id="imageInput" accept="image/*" style="display: none;">
                         <div class="upload-icon">📸</div>
-                        <p class="upload-text">Kéo ảnh vào đây hoặc <button type="button" class="link-btn" id="uploadBtn">chọn ảnh</button></p>
-                        <small>JPG, PNG, BMP (tối đa 16MB)</small>
+                        <p class="upload-text">Kéo ảnh vào đây, dán ảnh bằng Ctrl+V/⌘V, hoặc <button type="button" class="link-btn" id="uploadBtn">chọn ảnh</button></p>
+                        <small>JPG, PNG, BMP, GIF (tối đa 16MB)</small>
                     </div>
                 </div>
             </section>
@@ -60,14 +69,14 @@
                         </div>
                     </div>
 
-                    <!-- All Probabilities -->
+                    <!-- Single Prediction -->
                     <div class="probabilities-result">
-                        <h3>Xác Suất Theo Loại</h3>
+                        <h3>Kết Quả Dự Đoán</h3>
                         <div class="probability-list" id="probabilityList"></div>
                     </div>
 
-                    <!-- Chart -->
-                    <div class="chart-container">
+                    <!-- Chart hidden when only top-1 is shown -->
+                    <div class="chart-container" style="display: none;">
                         <canvas id="probabilityChart"></canvas>
                     </div>
                 </div>
@@ -79,8 +88,9 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <p>Xây dựng bằng Flask + PyTorch ResNet50</p>
+            <p>Xây dựng bằng Flask + PyTorch (Multi-Model)</p>
             <p id="deviceInfo"></p>
+            <p id="modelInfo">⏳ Đang tải thông tin model...</p>
         </footer>
     </div>
 
