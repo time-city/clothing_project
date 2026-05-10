@@ -13,14 +13,7 @@
             <h1>👗 Phân Loại Quần Áo</h1>
             <p class="subtitle">Tải ảnh quần áo, kéo thả hoặc dán trực tiếp từ clipboard để AI phân loại cho bạn</p>
             
-            <!-- Model Selector -->
-            <div class="model-selector">
-                <label for="modelType">🤖 Model:</label>
-                <select id="modelType">
-                    <option value="resnet">ResNet50 (Chính xác cao)</option>
-                    <option value="mobilenet">MobileNet (Nhanh nhạp)</option>
-                </select>
-            </div>
+
         </header>
 
         <!-- Main Content -->
@@ -62,23 +55,28 @@
                 <div class="result-container">
                     <div class="prediction-result">
                         <h2>Kết Quả Dự Đoán</h2>
-                        <div class="main-prediction">
-                            <p class="prediction-label">Loại Quần Áo:</p>
-                            <p class="prediction-class" id="predictionClass"></p>
-                            <p class="prediction-confidence" id="predictionConfidence"></p>
+                    <div class="result-grid">
+                        <div class="model-card" id="resnetCard">
+                            <h3>ResNet50</h3>
+                            <div class="model-body">
+                                <p class="prediction-label">Loại Quần Áo:</p>
+                                <p class="prediction-class" id="resnetPredictionClass"></p>
+                                <p class="prediction-confidence" id="resnetPredictionConfidence"></p>
+                                <div class="error-block" id="resnetError" style="display:none;"></div>
+                            </div>
+                        </div>
+
+                        <div class="model-card" id="mobilenetCard">
+                            <h3>MobileNet</h3>
+                            <div class="model-body">
+                                <p class="prediction-label">Loại Quần Áo:</p>
+                                <p class="prediction-class" id="mobilenetPredictionClass"></p>
+                                <p class="prediction-confidence" id="mobilenetPredictionConfidence"></p>
+                                <div class="error-block" id="mobilenetError" style="display:none;"></div>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Single Prediction -->
-                    <div class="probabilities-result">
-                        <h3>Kết Quả Dự Đoán</h3>
-                        <div class="probability-list" id="probabilityList"></div>
-                    </div>
-
-                    <!-- Chart hidden when only top-1 is shown -->
-                    <div class="chart-container" style="display: none;">
-                        <canvas id="probabilityChart"></canvas>
-                    </div>
                 </div>
             </section>
 
