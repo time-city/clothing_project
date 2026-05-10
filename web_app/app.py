@@ -23,37 +23,32 @@ load_dotenv()
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Model type (default: resnet, options: resnet, mobilenet)
-MODEL_TYPE = os.getenv('MODEL_TYPE', 'resnet').lower()
-print(f"🎽 Selected model type: {MODEL_TYPE}")
+# Run BOTH models (resnet + mobilenet) together (no model selection)
 
-# Import appropriate model
-if MODEL_TYPE == 'mobilenet':
-    try:
-        from mobilenet_model.model import MobileNetClassifier as Classifier
-        from mobilenet_model.model import load_model, predict, CLASS_NAMES, prepare_image_for_inference
-        MODEL_PATH = Path(__file__).parent.parent / 'mobilenet_model' / 'clothing_model.pth'
-        MODEL_VARIANT = 'MobileNet'
-    except ImportError as e:
-        print(f"ERROR: Could not import MobileNet model: {e}")
-        MODEL_TYPE = 'resnet'
-        from ai_model.model import ClothingClassifier as Classifier
-        from ai_model.model import load_model, predict, CLASS_NAMES, prepare_image_for_inference
-        MODEL_PATH = Path(__file__).parent.parent / 'ai_model' / 'best_model.pth'
-        MODEL_VARIANT = 'ResNet50'
-else:
-    try:
-        from ai_model.model import ClothingClassifier as Classifier
-        from ai_model.model import load_model, predict, CLASS_NAMES, prepare_image_for_inference
-        MODEL_PATH = Path(__file__).parent.parent / 'ai_model' / 'best_model.pth'
-        MODEL_VARIANT = 'ResNet50'
-    except ImportError as e:
-        print(f"ERROR: Could not import ResNet model: {e}")
-        print("Make sure ai_model/model.py exists!")
-        Classifier = None
-        CLASS_NAMES = []
-        MODEL_PATH = None
-        MODEL_VARIANT = 'Unknown'
+# Import modules
+import ai_model.model as resnet_module
+import mobilenet_model.model as mobilenet_module
+
+# Paths to checkpoints
+RESNET_PATH = Path(__file__).parent.parent / 'ai_model' / 'best_model.pth'
+MOBILENET_PATH = Path(__file__).parent.parent / 'mobilenet_model' / 'clothing_model.pth'
+
+# Unified class names
+CLASS_NAMES = resnet_module.CLASS_NAMES
+
+MODEL_VARIANTS = {
+    'resnet': {
+        'module': resnet_module,
+        'path': RESNET_PATH,
+        'variant': 'ResNet50',
+    },
+    'mobilenet': {
+        'module': mobilenet_module,
+        'path': MOBILENET_PATH,
+        'variant': 'MobileNet',
+    },
+}
+
 
 # Import Cloudinary helper
 try:
@@ -70,11 +65,21 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 # Device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"🖥️  Using device: {device}")
-print(f"📊 Model path: {MODEL_PATH}")
+print(f"📊 Checkpoints: resnet={RESNET_PATH} | mobilenet={MOBILENET_PATH}")
 
-# Global model
-classifier = None
+
+# Global models
+resnet_classifier = None
+mobilenet_classifier = None
+
+# status dict to report errors to frontend
+model_status = {
+    'resnet': {'loaded': False, 'error': None, 'variant': MODEL_VARIANTS['resnet']['variant']},
+    'mobilenet': {'loaded': False, 'error': None, 'variant': MODEL_VARIANTS['mobilenet']['variant']},
+}
+
 cloudinary_helper = None
+
 
 CLASS_DISPLAY_NAMES = {
     'ao_khoac': 'Áo khoác',
@@ -96,26 +101,47 @@ def display_class_names(class_names: list[str]) -> list[str]:
     return [display_class_name(name) for name in class_names]
 
 
-def load_trained_model():
-    """Load trained model từ saved weights"""
-    global classifier
-    
+def load_one_model(model_key: str):
+    """Load one model and save its status for frontend error reporting."""
+    global resnet_classifier, mobilenet_classifier
+
+    meta = MODEL_VARIANTS[model_key]
+    module = meta['module']
+    model_path = meta['path']
+
     try:
-        if MODEL_PATH is None or not MODEL_PATH.exists():
-            print(f"❌ Model not found at {MODEL_PATH}")
-            print(f"   Please download trained model from Colab & place it at {MODEL_PATH}")
-            return False
-        
-        print(f"📥 Loading {MODEL_VARIANT} model from {MODEL_PATH}...")
-        classifier = load_model(str(MODEL_PATH), device=device)
-        
+        if model_path is None or not model_path.exists():
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+
+        print(f"📥 Loading {meta['variant']} model from {model_path}...")
+        model = module.load_model(str(model_path), device=device)
+
+        if model_key == 'resnet':
+            resnet_classifier = model
+        else:
+            mobilenet_classifier = model
+
+        model_status[model_key]['loaded'] = True
+        model_status[model_key]['error'] = None
         print("✅ Model loaded successfully!")
         return True
+
     except Exception as e:
-        print(f"❌ Error loading model: {str(e)}")
         import traceback
-        traceback.print_exc()
+        tb = traceback.format_exc()
+        print(f"❌ Error loading {meta['variant']}: {str(e)}")
+        print(tb)
+
+        model_status[model_key]['loaded'] = False
+        model_status[model_key]['error'] = f"{str(e)}\n{tb}"
         return False
+
+
+def load_trained_models():
+    ok_res = load_one_model('resnet')
+    ok_mob = load_one_model('mobilenet')
+    return ok_res or ok_mob
+
 
 
 def init_cloudinary():
@@ -150,128 +176,146 @@ def init_cloudinary():
 @app.route('/')
 def index():
     """Serve main HTML page"""
-    model_loaded = classifier is not None
-    return render_template('index.html', 
-                         model_loaded=model_loaded,
-                         class_names=display_class_names(CLASS_NAMES),
-                         model_type=MODEL_TYPE,
-                         model_variant=MODEL_VARIANT)
+    return render_template(
+        'index.html',
+        class_names=display_class_names(CLASS_NAMES),
+        model_status=model_status,
+    )
+
 
 
 @app.route('/api/status', methods=['GET'])
 def api_status():
-    """Get API status and info"""
+    """Get API status and info for both models."""
     return jsonify({
         'status': 'ok',
-        'model_loaded': classifier is not None,
-        'model_type': MODEL_TYPE,
-        'model_variant': MODEL_VARIANT,
         'device': str(device),
         'num_classes': len(CLASS_NAMES),
         'classes': display_class_names(CLASS_NAMES),
-        'available_models': ['resnet', 'mobilenet']
+        'available_models': {
+            'resnet': bool(RESNET_PATH.exists()),
+            'mobilenet': bool(MOBILENET_PATH.exists()),
+        },
+        'model_status': model_status,
     })
+
 
 
 @app.route('/api/models', methods=['GET'])
 def api_models():
-    """Get available models and their status"""
-    resnet_exists = (Path(__file__).parent.parent / 'ai_model' / 'best_model.pth').exists()
-    mobilenet_exists = (Path(__file__).parent.parent / 'mobilenet_model' / 'clothing_model.pth').exists()
-    
+    """Get available models and their status (for frontend)."""
     return jsonify({
+        'device': str(device),
+        'classes': display_class_names(CLASS_NAMES),
+        'model_status': model_status,
         'available': {
-            'resnet': resnet_exists,
-            'mobilenet': mobilenet_exists
+            'resnet': bool(RESNET_PATH.exists()),
+            'mobilenet': bool(MOBILENET_PATH.exists()),
         },
-        'current': {
-            'type': MODEL_TYPE,
-            'variant': MODEL_VARIANT,
-            'loaded': classifier is not None,
-            'classes': display_class_names(CLASS_NAMES),
-        }
     })
+
 
 
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
-    """Inference API - POST image, GET predictions"""
+    """Inference API - run BOTH models on the same uploaded image."""
     try:
-        # Check model
-        if classifier is None:
-            return jsonify({
-                'success': False,
-                'error': f'Model not loaded. Ensure the selected checkpoint exists in the {MODEL_VARIANT.lower()} folder.'
-            }), 400
-        
         # Get image
         if 'image' not in request.files:
-            return jsonify({
-                'success': False,
-                'error': 'No image provided in request'
-            }), 400
-        
+            return jsonify({'success': False, 'error': 'No image provided in request'}), 400
+
         file = request.files['image']
         if file.filename == '':
-            return jsonify({
-                'success': False,
-                'error': 'No file selected'
-            }), 400
-        
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+
         # Load image
         try:
             image = Image.open(BytesIO(file.read()))
         except Exception as e:
-            return jsonify({
-                'success': False,
-                'error': f'Invalid image file: {str(e)}'
-            }), 400
-        
-        # Upload to Cloudinary (optional)
+            return jsonify({'success': False, 'error': f'Invalid image file: {str(e)}'}), 400
+
+        # Upload to Cloudinary (optional) once
         cloudinary_url = None
         if cloudinary_helper is not None:
             try:
-                # Save to temp file
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                    prepare_image_for_inference(image).save(tmp.name)
-                    
-                    # Upload to Cloudinary
+                    resnet_module.prepare_image_for_inference(image).save(tmp.name)
                     result = cloudinary_helper.upload_image(tmp.name)
-                    if result['success']:
-                        cloudinary_url = result['url']
-                    
-                    # Clean up
+                    if result.get('success'):
+                        cloudinary_url = result.get('url')
                     os.unlink(tmp.name)
             except Exception as e:
                 print(f"Cloudinary upload error: {str(e)}")
-        
-        # Predict using model
-        top_classes, top_scores, top_indices = predict(classifier, image, device=device, return_top_k=1)
-        top_classes_display = [display_class_name(name) for name in top_classes]
-        
-        # Format results
+
+        import time
+        predictions = {
+            'resnet': None,
+            'mobilenet': None,
+        }
+        timings = {
+            'resnet_ms': None,
+            'mobilenet_ms': None,
+        }
+
+        # ResNet predict
+        if resnet_classifier is not None:
+            try:
+                start = time.perf_counter()
+                top_classes, top_scores, top_indices = resnet_module.predict(
+                    resnet_classifier, image, device=device, return_top_k=1
+                )
+                end = time.perf_counter()
+                timings['resnet_ms'] = (end - start) * 1000.0
+                predictions['resnet'] = {
+                    'class_index': int(top_indices[0]),
+                    'class_name': display_class_name(top_classes[0]),
+                    'confidence': float(top_scores[0]),
+                    'confidence_percent': float(top_scores[0]) * 100,
+                }
+            except Exception as e:
+                predictions['resnet'] = None
+                model_status['resnet']['loaded'] = False
+                model_status['resnet']['error'] = f"Predict error: {str(e)}"
+
+        # MobileNet predict
+        if mobilenet_classifier is not None:
+            try:
+                start = time.perf_counter()
+                top_classes, top_scores, top_indices = mobilenet_module.predict(
+                    mobilenet_classifier, image, device=device, return_top_k=1
+                )
+                end = time.perf_counter()
+                timings['mobilenet_ms'] = (end - start) * 1000.0
+                predictions['mobilenet'] = {
+                    'class_index': int(top_indices[0]),
+                    'class_name': display_class_name(top_classes[0]),
+                    'confidence': float(top_scores[0]),
+                    'confidence_percent': float(top_scores[0]) * 100,
+                }
+            except Exception as e:
+                predictions['mobilenet'] = None
+                model_status['mobilenet']['loaded'] = False
+                model_status['mobilenet']['error'] = f"Predict error: {str(e)}"
+
+
+        if predictions['resnet'] is None and predictions['mobilenet'] is None:
+            return jsonify({'success': False, 'error': 'No model could predict.', 'model_status': model_status}), 400
+
         result = {
             'success': True,
-            'model_used': MODEL_VARIANT,
-            'prediction': {
-                'class_index': int(top_indices[0]),
-                'class_name': top_classes_display[0],
-                'confidence': float(top_scores[0]),
-                'confidence_percent': float(top_scores[0]) * 100
-            }
+            'predictions': predictions,
+            'model_status': model_status,
+            'timings_ms': timings,
         }
-        
-        # Add Cloudinary URL if uploaded
+
         if cloudinary_url:
             result['image_url'] = cloudinary_url
-        
+
         return jsonify(result), 200
-    
+
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'Server error: {str(e)}'
-        }), 500
+        return jsonify({'success': False, 'error': f'Server error: {str(e)}'}), 500
+
 
 
 # ==================== Error Handlers ====================
@@ -310,13 +354,13 @@ if __name__ == '__main__':
     print("CLOTHING CLASSIFIER - WEB APP (Multi-Model)")
     print("🎽"*30)
     
-    # Try to load model
-    model_loaded = load_trained_model()
-    if model_loaded:
-        print(f"✅ {MODEL_VARIANT} model ready for predictions")
+    # Try to load both models
+    models_ok = load_trained_models()
+    if models_ok:
+        print("✅ At least one model ready for predictions")
     else:
-        print("⚠️  Model not loaded - will run in demo mode")
-        print(f"   Expected path: {MODEL_PATH}")
+        print("⚠️  Neither model loaded - predictions will fail")
+
     
     # Try to initialize Cloudinary
     cloudinary_ok = init_cloudinary()
@@ -328,7 +372,8 @@ if __name__ == '__main__':
     # Print info
     print(f"\n🌐 Starting Flask server...")
     print(f"   URL: http://localhost:8000")
-    print(f"   Model: {MODEL_VARIANT} ({MODEL_TYPE})")
+    print(f"   Models: ResNet50 + MobileNet")
+
     print(f"   Device: {device}")
     print(f"   Classes: {len(CLASS_NAMES)}")
     print(f"\n📝 API Endpoints:")
@@ -337,7 +382,7 @@ if __name__ == '__main__':
     print(f"   GET  /api/models - Available models")
     print(f"   POST /api/predict - Get prediction")
     print(f"\n💡 To use MobileNet instead of ResNet:")
-    print(f"   MODEL_TYPE=mobilenet python app.py")
+    print("   (Hệ thống chạy cả ResNet50 + MobileNet để so sánh)")
     print("\n" + "🎽"*30 + "\n")
     
     # Run app
